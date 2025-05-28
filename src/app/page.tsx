@@ -26,7 +26,7 @@ const Home: FC = () => {
 
   const { toast } = useToast();
 
-  const isPaused = !isRunning && timerSeconds > 0 && currentActivityName !== '';
+  const isPaused = !isRunning && timerSeconds > 0 && (currentActivityName !== '' || pausedActivityName !== '');
 
   // Load activities from localStorage on initial mount
   useEffect(() => {
@@ -86,20 +86,22 @@ const Home: FC = () => {
   // }, [toast]);
 
   const handleActivityInputChange = (newName: string) => {
-    if (isPaused && newName !== currentActivityName) {
+    if (isPaused && newName !== pausedActivityName) {
       // If activity is paused and user types a *new* name, reset the timer for the new activity
       setTimerSeconds(0);
-      setPausedActivityName('');
+
       toast({
         title: "Сброс таймера для текущей активности",
-        description: `Таймер для "${currentActivityName}" был очищен.`,
+        description: `Таймер для "${pausedActivityName}" был очищен.`,
       });
+      setPausedActivityName('');
     }
     setCurrentActivityName(newName);
   };
 
   const handleStartTimer = () => {
-    if (!currentActivityName.trim()) {
+    const activityToStart = currentActivityName.trim();
+    if (!activityToStart) {
       toast({
         title: "Требуется название активности",
         description: "Введите, пожалуйста, название активности для запуска таймера.",
@@ -108,41 +110,68 @@ const Home: FC = () => {
       return;
     }
     setIsRunning(true);
-    // setSuggestedActivities([]); // Clear previous suggestions
-    if (isPaused && currentActivityName !== pausedActivityName) {
-      // If resuming and activity name changed via input somehow (defensive)
-      setTimerSeconds(0); 
+    if (isPaused) { // Resuming
+      if (activityToStart !== pausedActivityName) { // Resuming with a changed name (e.g. typed in input)
+        setTimerSeconds(0); // Reset timer for new activity
+        toast({
+          title: "Запущена новая активность",
+          description: `Таймер для "${pausedActivityName}" очищен. Стартует "${activityToStart}".`,
+        });
+      } else { // Resuming the same paused activity
+         toast({
+          title: "Активнось возобновлен",
+          description: `"${activityToStart}" была возобновлена.`,
+        });
+      }
+    } else { // Starting fresh
+      setTimerSeconds(0); // Ensure timer is reset if it wasn't (e.g. after selecting suggestion/past activity)
+      toast({
+        title: "Activity Started",
+        description: `"${activityToStart}" has started.`,
+      });
     }
-    setPausedActivityName(currentActivityName); // Store name in case of pause
+    
+    // setSuggestedActivities([]); // Clear suggestions when timer starts/resumes
+    setCurrentActivityName(activityToStart); // Ensure currentActivityName is the one running
+    setPausedActivityName(activityToStart); // Store name in case of pause
   };
 
    const handlePauseTimer = () => {
     if (isRunning) {
       setIsRunning(false);
-      setPausedActivityName(currentActivityName); // Ensure paused name is set
+      // pausedActivityName is already set by handleStartTimer or if activity name was changed while paused.
+      // We rely on currentActivityName for the display if input is not disabled,
+      // but pausedActivityName holds the true "paused" activity.
+      const activityActuallyPaused = currentActivityName.trim() || pausedActivityName;
+      setPausedActivityName(activityActuallyPaused); // Ensure it's set to what was running
+      
       toast({
         title: "Пауза",
-        description: `"${currentActivityName}" приостановлена.`,
+        description: `"${activityActuallyPaused}" приостановлена.`,
       });
     }
   };
 
   const handleStopTimer = () => {
     setIsRunning(false);
-        const activityToLog = isPaused ? pausedActivityName : currentActivityName;
+    setIsRunning(false);
+    const activityToLog = (isPaused ? pausedActivityName : currentActivityName).trim();
 
-    if (!activityToLog.trim() && timerSeconds === 0) {
+    if (!activityToLog && timerSeconds === 0) {
       toast({
-        title: "Нечего останавливать",
-        description: "Нет запущенной или приостановленной активности.",
+        title: "Нечего записывать",
+        description: "Нет запущенной активности или активности на паузе.",
         variant: "default"
       });
+      setCurrentActivityName('');
+      setPausedActivityName('');
+      setTimerSeconds(0);
       return;
     }
-    if (!activityToLog.trim() && timerSeconds > 0) {
+     if (!activityToLog && timerSeconds > 0) {
       toast({
         title: "Невозможно записать активность",
-        description: "Для текущего таймера не задано название активности",
+        description: "Не задано название активности для текущего таймера.",
         variant: "destructive"
       });
       return;
@@ -150,13 +179,13 @@ const Home: FC = () => {
 
     const newActivity: Activity = {
       id: Date.now().toString(),
-      name: activityToLog.trim(),
+      name: activityToLog,
       duration: timerSeconds,
     };
-    setActivities((prevActivities) => [...prevActivities, newActivity]);
+    setActivities((prevActivities) => [newActivity, ...prevActivities]);
     toast({
-      title: "Активность записана",
-      description: `"${newActivity.name}" for ${timerSeconds}s.`,
+      title: "Активность завершена и записана",
+      description: `Активность "${newActivity.name}" длилась ${timerSeconds} с.`,
     });
     
     // const pastActivityNames = activities.map(act => act.name);
@@ -170,7 +199,7 @@ const Home: FC = () => {
   };
 
   const handleResetTimer = () => {
-    const activityThatWasReset = isPaused ? pausedActivityName : currentActivityName;
+    const activityThatWasReset = (isPaused ? pausedActivityName : currentActivityName).trim();
     const timeThatWasReset = timerSeconds;
 
     setIsRunning(false);
@@ -178,7 +207,7 @@ const Home: FC = () => {
     setCurrentActivityName(''); 
     setPausedActivityName('');
 
-    if (activityThatWasReset.trim() || timeThatWasReset > 0) {
+    if (activityThatWasReset || timeThatWasReset > 0) {
        toast({
         title: "Сборос таймера",
         description: `Таймер для "${activityThatWasReset}" был сброшен.`,
@@ -192,22 +221,60 @@ const Home: FC = () => {
   };
 
   const handleSelectSuggestion = (suggestion: string) => {
-    if (isPaused && suggestion !== currentActivityName) {
+    const newActivitySelected = suggestion.trim();
+    if (isPaused && newActivitySelected !== pausedActivityName) {
        toast({
         title: "Timer Reset for New Activity",
-        description: `Paused timer for "${currentActivityName}" was cleared. Starting "${suggestion}".`,
+        description: `Paused timer for "${pausedActivityName}" was cleared. "${newActivitySelected}" is ready.`,
       });
+       setPausedActivityName(''); // Clear paused name as it's being replaced
+    } else if (isRunning && newActivitySelected !== currentActivityName) {
+        toast({
+            title: "Timer Reset for New Activity",
+            description: `Timer for "${currentActivityName}" was cleared. "${newActivitySelected}" is ready.`,
+        });
     }
-    setCurrentActivityName(suggestion);
+    
+    setCurrentActivityName(newActivitySelected);
+    // setSuggestedActivities([]); 
     setTimerSeconds(0); 
-    setIsRunning(false); // Ensure not running if a suggestion is selected
-    setPausedActivityName('');
+    setIsRunning(false);
+    setPausedActivityName(''); // Ensure paused state is clean for the new activity
   };
   
+  const handleSelectPastActivity = (activityName: string) => {
+    const selected = activityName.trim();
+    if (isRunning || isPaused) {
+        const currentActiveOrPausedActivity = (isRunning ? currentActivityName : pausedActivityName).trim();
+        if (currentActiveOrPausedActivity && currentActiveOrPausedActivity !== selected) {
+            toast({
+                title: "Сброс текущего таймера",
+                description: `Таймер для "${currentActiveOrPausedActivity}" был сброшен. "${selected}"  готова к запуску.`,
+            });
+        } else if (!currentActiveOrPausedActivity) {
+             toast({
+                title: "Активность выбрана",
+                description: `"${selected}" готова к запуску.`,
+            });
+        }
+    } else {
+        toast({
+            title: "Активность выбрана",
+            description: `"${selected}" готова к запуску.`,
+        });
+    }
+
+    setCurrentActivityName(selected);
+    setTimerSeconds(0);
+    setIsRunning(false);
+    setPausedActivityName('');
+    // setSuggestedActivities([]);
+  };
+
   const activityPlaceholder = isRunning 
-    ? "Таймер запущен..." 
+    ? `Время: ${currentActivityName.trim() || 'Без названия'}`
     : isPaused 
-    ? `Пауза: ${pausedActivityName || currentActivityName}` 
+    ? `Пауза: ${pausedActivityName.trim() || 'Без названия'}`
     : "Над чем вы работаете?";
 
   return (
@@ -219,7 +286,7 @@ const Home: FC = () => {
           <ActivityInput
             value={currentActivityName}
             onChange={handleActivityInputChange}
-            disabled={isRunning}
+            disabled={isRunning} // Only disable if truly running, not just paused
             placeholder={activityPlaceholder}
           />
         </div>
@@ -230,18 +297,17 @@ const Home: FC = () => {
           onPause={handlePauseTimer}
           onStop={handleStopTimer}
           onReset={handleResetTimer}
-          isActivitySet={!!currentActivityName.trim() || timerSeconds > 0}
-          currentActivityName={currentActivityName}
+          isActivitySet={!!currentActivityName.trim() || !!pausedActivityName.trim() || timerSeconds > 0}
+          currentActivityName={currentActivityName.trim()}
+          pausedActivityName={pausedActivityName.trim()}
         />
-        {/* <ActivitySuggestions
-          suggestions={suggestedActivities}
-          onSelect={handleSelectSuggestion}
-          isLoading={isLoadingSuggestions}
-        /> */}
-        <ActivityList activities={activities} />
+        <ActivityList 
+            activities={activities}
+            onSelectActivity={handleSelectPastActivity}
+        />
       </main>
       <footer className="py-6 text-center text-sm text-muted-foreground border-t">
-        <p>&copy; {new Date().getFullYear()} @rkozom. Time Tracker</p>
+        <p>&copy; {new Date().getFullYear()} @rkozom. Персональный трекер времени</p>
       </footer>
     </div>
   );
